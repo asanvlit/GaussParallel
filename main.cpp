@@ -8,17 +8,36 @@ int size, rank;
 
 const double accuracy = 1.e-6;
 
-// определяют номера строк матрицы, выбираемых в качестве ведущих, по итерациям прямого хода
+// хранит номера строк матрицы, выбираемых в качестве ведущих, по итерациям прямого хода
 // метода Гаусса – определяет далее порядок выполнения итераций для обратного хода
 int* pParallelPivotPos;
 
-// определяют номера итераций прямого хода метода Гаусса, на которых строки процесса использовались в
-// качестве ведущих – нулевое значение элемента означает, что соответствующая строка должна обрабатываться при исключении
-// неизвестных
+// хранит номера итераций, на которых определенная строка использовалась в качестве ведущей (если -1, то должна обрабатываться при обратном ходе)
 int* pProcPivotIter;
 
-int* pProcInd; // Number of the first row located on the processes
-int* pProcNum; // Number of the linear system rows located on the processes
+int* pRowStartIndex; // Номер строки, с которой начинается блок для данного процесса
+int* pRowNumber;     // Количество строк для данного процесса
+
+void printMatrix(double* m, int rowCount, int colCount) {
+    for (int i = 0; i < rowCount; i++) {
+        for (int j = 0; j < colCount; j++) {
+            printf("%7.4f ", m[i * colCount + j]);
+        }
+        printf("\n");
+    }
+}
+
+void printVector(double* v, int n) {
+    for (int i = 0; i < n; i++) {
+        printf("%7.4f ", v[i]);
+    }
+}
+
+void printResultVector(double* resultV, int n) {
+    for (int i = 0; i < n; i++) {
+        printf("%7.4f ", resultV[pParallelPivotPos[i]]);
+    }
+}
 
 void fillUpMatrixWithRandom(double* pMatrix, double* pVector, int n) {
     srand(unsigned(clock()));
@@ -31,44 +50,43 @@ void fillUpMatrixWithRandom(double* pMatrix, double* pVector, int n) {
     }
 }
 
-void initProcess(double*& pMatrix, double*& pVector, double*& pResult, double*& pProcRows, double*& pProcVector, double*& pProcResult, int& n, int& pBlockSize) {
-    int remRowsNumb;
-
+void initProcess(double*& a, double*& v, double*& result, double*& pA, double*& pV, double*& pResult, int& n, int& pBlockSize) {
     if (rank == 0) {
         n = -1;
         while (n < size) {
             printf_s("\nEnter the size of the matrix: ");
             scanf_s("%d", &n);
+
             if (n < size) {
                 printf("Invalid matrix size: n must be greater than the number of processes \n");
             }
         }
+
+        a = new double[n * n];
+        v = new double[n];
+        result = new double[n];
+        fillUpMatrixWithRandom(a, v, n);
     }
     MPI_Bcast(&n, 1, MPI_INT, 0, MPI_COMM_WORLD);
 
-    remRowsNumb = n; // количество оставшихся строк
+    int remRowsNumb = n; // количество оставшихся строк
     for (int i = 0; i < rank; i++) {
         remRowsNumb = remRowsNumb - remRowsNumb / (size - i);
     }
     pBlockSize = remRowsNumb / (size - rank); // количество строк для обработки для данного процесса
 
-    pProcRows = new double[pBlockSize * n];
-    pProcVector = new double[pBlockSize];
-    pProcResult = new double[pBlockSize];
+    pA = new double[pBlockSize * n];
+    pV = new double[pBlockSize];
+    pResult = new double[pBlockSize];
 
     pParallelPivotPos = new int[n];
     pProcPivotIter = new int[pBlockSize];
 
-    pProcInd = new int[size];
-    pProcNum = new int[size];
+    pRowStartIndex = new int[size];
+    pRowNumber = new int[size];
 
     for (int i = 0; i < pBlockSize; i++) {
         pProcPivotIter[i] = -1;
-    }
-
-    if (rank == 0) {
-        pMatrix = new double[n * n]; pVector = new double[n]; pResult = new double[n];
-        fillUpMatrixWithRandom(pMatrix, pVector, n);
     }
 }
 
@@ -97,15 +115,15 @@ void dataDistribution(double* pMatrix, double* pProcRows, double* pVector, doubl
 
     // Определение позиций строк матрицы для текущего процесса:
     remRowsNumb = n;
-    pProcInd[0] = 0;
-    pProcNum[0] = n / size;
+    pRowStartIndex[0] = 0;
+    pRowNumber[0] = n / size;
     for (int i = 1; i < size; i++) {
-        remRowsNumb -= pProcNum[i - 1];
-        pProcNum[i] = remRowsNumb / (size - i);
-        pProcInd[i] = pProcInd[i - 1] + pProcNum[i - 1];
+        remRowsNumb -= pRowNumber[i - 1];
+        pRowNumber[i] = remRowsNumb / (size - i);
+        pRowStartIndex[i] = pRowStartIndex[i - 1] + pRowNumber[i - 1];
     }
 
-    MPI_Scatterv(pVector, pProcNum, pProcInd, MPI_DOUBLE, pProcVector, pProcNum[rank], MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    MPI_Scatterv(pVector, pRowNumber, pRowStartIndex, MPI_DOUBLE, pProcVector, pRowNumber[rank], MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
     delete[] pSendNum;
     delete[] pSendInd;
@@ -113,27 +131,7 @@ void dataDistribution(double* pMatrix, double* pProcRows, double* pVector, doubl
 
 void resultCollection(double* pProcResult, double* pResult) {
     //Gather the whole result vector on every processor
-    MPI_Gatherv(pProcResult, pProcNum[rank], MPI_DOUBLE, pResult, pProcNum, pProcInd, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-}
-
-void printMatrix(double* pMatrix, int RowCount, int ColCount) {
-    for (int i = 0; i < RowCount; i++) {
-        for (int j = 0; j < ColCount; j++) {
-            printf("%7.4f ", pMatrix[i * ColCount + j]);
-        }
-        printf("\n");
-    }
-}
-
-void printVector(double* pVector, int n) {
-    for (int i = 0; i < n; i++) {
-        printf("%7.4f ", pVector[i]);
-    }
-}
-
-void printResultVector(double* pResult, int n) {
-    for (int i = 0; i < n; i++)
-        printf("%7.4f ", pResult[pParallelPivotPos[i]]);
+    MPI_Gatherv(pProcResult, pRowNumber[rank], MPI_DOUBLE, pResult, pRowNumber, pRowStartIndex, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 }
 
 void parallelEliminateColumns(double* pProcRows, double* pProcVector, double* pPivotRow, int n, int pBlockSize, int iter) {
@@ -183,7 +181,7 @@ void parallelGaussianElimination(double* pProcRows, double* pProcVector, int n, 
         // Рассылка ведущей строки
         if (rank == Pivot.ProcRank) {
             pProcPivotIter[PivotPos] = i; // номер итерации
-            pParallelPivotPos[i] = pProcInd[rank] + PivotPos;
+            pParallelPivotPos[i] = pRowStartIndex[rank] + PivotPos;
         }
         MPI_Bcast(&pParallelPivotPos[i], 1, MPI_INT, Pivot.ProcRank,MPI_COMM_WORLD);
 
@@ -203,10 +201,10 @@ void parallelGaussianElimination(double* pProcRows, double* pProcVector, int n, 
 // Function for finding the pivot row of the back substitution
 void FindBackPivotRow(int RowIndex, int n, int& IterProcRank, int& IterPivotPos) {
     for (int i = 0; i < size - 1; i++) {
-        if ((pProcInd[i] <= RowIndex) && (RowIndex < pProcInd[i + 1])) IterProcRank = i;
+        if ((pRowStartIndex[i] <= RowIndex) && (RowIndex < pRowStartIndex[i + 1])) IterProcRank = i;
     }
-    if (RowIndex >= pProcInd[size - 1]) IterProcRank = size - 1;
-    IterPivotPos = RowIndex - pProcInd[IterProcRank];
+    if (RowIndex >= pRowStartIndex[size - 1]) IterProcRank = size - 1;
+    IterPivotPos = RowIndex - pRowStartIndex[IterProcRank];
 }
 
 // Обратный ход:
@@ -268,8 +266,8 @@ void processTermination(double* pMatrix, double* pVector, double* pResult, doubl
     delete[] pParallelPivotPos;
     delete[] pProcPivotIter;
 
-    delete[] pProcInd;
-    delete[] pProcNum;
+    delete[] pRowStartIndex;
+    delete[] pRowNumber;
 }
 
 // Проверка результата
@@ -303,12 +301,12 @@ void testResult(double* pMatrix, double* pVector, double* pResult, int n) {
 }
 
 int main(int argc, char* argv[]) {
-    double* pMatrix;
-    double* pVector;	// Right parts of the linear system
-    double* pResult;
-    double* pProcRows;	// Rows of the matrix A
-    double* pProcVector;	// Block of the vector b
-    double* pProcResult;	// Block of the vector x
+    double* a;            // Матрица
+    double* v;            // Вектор
+    double* result;       // Вычисленные неизвестные
+    double* pA;           // Строки матрицы для данного процесса
+    double* pV;	          // Кусок вектора для данного процесса
+    double* pResult;  // Block of the v x
     int	n;
     int	rowNum;	// Number of the matrix rows
     double start, finish, duration;
@@ -319,26 +317,26 @@ int main(int argc, char* argv[]) {
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &size);
 
-    initProcess(pMatrix, pVector, pResult, pProcRows, pProcVector, pProcResult, n, rowNum);
+    initProcess(a, v, result, pA, pV, pResult, n, rowNum);
 
     start = MPI_Wtime();
-    dataDistribution(pMatrix, pProcRows, pVector, pProcVector, n, rowNum);
-    gauss(pProcRows, pProcVector, pProcResult, n, rowNum);
-    printInitialData(pMatrix, pVector, pProcRows, pProcVector, n, rowNum);
-    resultCollection(pProcResult, pResult);
+    dataDistribution(a, pA, v, pV, n, rowNum);
+    gauss(pA, pV, pResult, n, rowNum);
+    printInitialData(a, v, pA, pV, n, rowNum);
+    resultCollection(pResult, result);
     finish = MPI_Wtime(); duration = finish - start;
 
     if (rank == 0) {
         printf("\n Result Vector: \n");
-        printResultVector(pResult, n);
+        printResultVector(result, n);
     }
-//    testResult(pMatrix, pVector, pResult, n);
+    testResult(a, v, result, n);
 
     if (rank == 0) {
         printf("\n Time of execution: %f\n", duration);
     }
 
-    processTermination(pMatrix, pVector, pResult, pProcRows, pProcVector, pProcResult);
+    processTermination(a, v, result, pA, pV, pResult);
 
     MPI_Finalize();
 }
