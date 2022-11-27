@@ -334,7 +334,7 @@ int main(int argc, char* argv[]) {
 
     double duration = finish - start;
     if (rank == 0) {
-        printf("\n Time of execution: %f\n", duration);
+        printf("\nTime spent: %f\n", duration);
     }
 
     printResultData(result, n);
@@ -344,3 +344,4 @@ int main(int argc, char* argv[]) {
 
     MPI_Finalize();
 }
+
