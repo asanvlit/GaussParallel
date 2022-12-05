@@ -7,6 +7,8 @@
 int size, rank;
 
 const double accuracy = 1.e-6;
+const int maxValue = 20;
+const int minValue = 1;
 
 // хранит номера строк матрицы, выбираемых в качестве ведущих, по итерациям прямого хода
 // метода Гаусса – определяет далее порядок выполнения итераций для обратного хода
@@ -40,9 +42,9 @@ void fillUpSystemWithRandom(double* pMatrix, double* pVector, int n) {
     srand(unsigned(clock()));
 
     for (int i = 0; i < n; i++) {
-        pVector[i] = rand() % 20;
+        pVector[i] = rand() % maxValue + minValue;
         for (int j = 0; j < n; j++) {
-            pMatrix[i * n + j] = rand() % 20;
+            pMatrix[i * n + j] = rand() % maxValue + minValue;
         }
     }
 }
@@ -157,7 +159,7 @@ void forwardGaussStep(double* pRows, double* pVector, int n, int pBlockSize) {
         ProcPivot.ProcRank = rank;
 
         // Поиск "ведущего" процесса - процесса с максимальным значением maxValue
-        // Функция MPI_ALLREDUCE отличается от MPI_REDUCE тем, что результат появляется в буфере приема у всех членов группы.
+        // Функция MPI_ALLREDUCE отличается от MPI_REDUCE тем, что результат появляется в буфере приема у всех членов группы. (MPI_Reduce возвращает результаты на единственный процесс)
         MPI_Allreduce(&ProcPivot, &Pivot, 1, MPI_DOUBLE_INT, MPI_MAXLOC, MPI_COMM_WORLD);
 
         // Рассылка ведущей строки
@@ -195,7 +197,7 @@ void forwardGaussStep(double* pRows, double* pVector, int n, int pBlockSize) {
 // Функция для нахождения ведущей строки обратной подстановки
 void findBackPivotRow(int rowIndex, int& iterProcRank, int& iterPivotPos) {
     for (int i = 0; i < size - 1; i++) {
-        if ((pRowStartIndex[i] <= rowIndex) && (rowIndex < pRowStartIndex[i + 1])) {
+        if ((pRowStartIndex[i] <= rowIndex) && (rowIndex < pRowStartIndex[i + 1])) { // лежит между
             iterProcRank = i;
         }
     }
@@ -316,7 +318,7 @@ int main(int argc, char* argv[]) {
     double* result;   // Вычисленные неизвестные
     double* pA;       // Строки матрицы для данного процесса
     double* pV;	      // Кусок вектора для данного процесса
-    double* pResult;  // Block of the v x
+    double* pResult;  // Кусок результата для данного процесса
 
     MPI_Init(&argc, &argv);
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
@@ -328,7 +330,6 @@ int main(int argc, char* argv[]) {
     double start = MPI_Wtime();
     distributeSystem(a, pA, v, pV, n, pBlockSize);
     gauss(pA, pV, pResult, n, pBlockSize);
-    printInitialData(a, v, pA, pV, n, pBlockSize);
     buildResult(pResult, result);
     double finish = MPI_Wtime();
 
@@ -337,6 +338,7 @@ int main(int argc, char* argv[]) {
         printf("\nTime spent: %f\n", duration);
     }
 
+    printInitialData(a, v, pA, pV, n, pBlockSize);
     printResultData(result, n);
     checkResult(a, v, result, n);
 
