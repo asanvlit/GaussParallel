@@ -264,7 +264,7 @@ void checkResult(double* pMatrix, double* pVector, double* pResult, int n) {
     double* pRightPartVector;
 
     // Флаг, который показывает, идентичны ли векторы обеих частей или нет
-    int isEqual = 0;
+    bool isEqual = 0;
 
     if (rank == 0) {
         pRightPartVector = new double[n];
@@ -277,10 +277,10 @@ void checkResult(double* pMatrix, double* pVector, double* pResult, int n) {
 
         for (int i = 0; i < n; i++) {
             if (fabs(pRightPartVector[i] - pVector[i]) > accuracy) {
-                isEqual = 1;
+                isEqual = true;
             }
         }
-        if (isEqual == 1) {
+        if (isEqual) {
             printf("\nThe result of the Gauss algorithm is NOT correct");
         }
         else {
