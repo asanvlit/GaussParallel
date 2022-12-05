@@ -264,7 +264,7 @@ void checkResult(double* pMatrix, double* pVector, double* pResult, int n) {
     double* pRightPartVector;
 
     // Флаг, который показывает, идентичны ли векторы обеих частей или нет
-    bool isEqual = 0;
+    bool isEqual = false;
 
     if (rank == 0) {
         pRightPartVector = new double[n];
